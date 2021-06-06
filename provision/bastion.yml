@@ -1,0 +1,95 @@
+---
+- name: provisioning
+  hosts: all
+  become: yes
+  gather_facts: True
+  max_fail_percentage: 0
+  vars:
+    app_path: /vagrant
+    user: operation
+    user_gr: operation
+    keyname: id_rsa
+
+  tasks: 
+
+    - name: ssh  directory
+      file: path=/root/.ssh state=directory owner=root group=root mode=0700
+
+    - name: Group Add
+      group:
+        name: "{{ user_gr }}"
+
+    - name: User Add
+      user:
+        name: "{{ user }}"
+        shell: "/bin/bash"
+        group: "{{ user }}"
+        password: "{{ 'zaq12wsx' | password_hash('sha512') }}"
+        generate_ssh_key: "yes"
+        ssh_key_bits: "2048"
+        ssh_key_file: ".ssh/{{ keyname }}"
+      register: key_context
+
+    - name: "deploy authorized key"
+      authorized_key:
+        user: "{{ user }}"
+        state: "present"
+        key: "{{ item.ssh_public_key }}"
+      with_items:
+        - "{{ key_context }}"
+      when: inventory_hostname == "server1"
+
+    - name: 作成した鍵をvagrant_dataにコピー
+      shell: "{{ item }}"
+      with_items:
+        - "cp /home/operation/.ssh/{{ keyname }} /vagrant_data/{{ keyname }}"
+        - "cp /home/operation/.ssh/authorized_keys /vagrant_data/authorized_keys"
+      when: inventory_hostname == "server1"
+
+
+    - name: authorized_keys copy 
+      copy:
+        src: "/vagrant_data/authorized_keys"
+        dest: "{{ item.value }}"
+        owner: "{{ item.key }}"
+        group: "{{ item.key }}"
+        mode: 0600
+        remote_src: yes
+      loop: "{{ user_info | dict2items }}"
+      vars:
+        user_info:
+          root: "/root/.ssh/"
+          operation: "/home/operation/.ssh/"
+
+    - name: key copy 
+      copy:
+        src: "/vagrant_data/id_rsa"
+        dest: "{{ item.value }}"
+        owner: "{{ item.key }}"
+        group: "{{ item.key }}"
+        mode: 0600
+      loop: "{{ user_info | dict2items }}"
+      vars:
+        user_info:
+          root: "/root/.ssh/"
+          operation: "/home/operation/.ssh/"
+
+    - name: Install 
+      yum:
+        name: "{{ packages }}"
+        state: present
+        update_cache: yes
+      vars:
+        packages:
+          - "git"
+          - "vim"
+          - "python38"
+          - "ansible"
+      when: inventory_hostname == "server4"
+
+    - name: git clone
+      ansible.builtin.git:
+        repo: https://gitlab.com/n.ishii0101/ansible_rasp
+        dest: /root/repo/
+        version: main
+      when: inventory_hostname == "server4"

@@ -10,7 +10,9 @@
     ruby_version: 2.5.1
     pg_owner: postgres
     pg_group: postgres
-    directory_pgdata: /var/lib/pgsql
+    directory_pgdata: /var/lib/pgsql/
+    keyname: id_rsa_pgpool
+    db_pass: "postgres"
 
   tasks: 
     - name: "update timezone"
@@ -32,32 +34,11 @@
         enabled: "no"
         state: "stopped"
 
-    - name: Add User
-      user: name="opeuser"
-      become: yes
     
     - name: ssh  directory
       file: path=/root/.ssh state=directory owner=root group=root mode=0700
 
-    - name: authorized_keys copy 
-      copy:
-        src: "authorized_keys"
-        dest: /root/.ssh/
-        owner: root
-        group: root
-        mode: 0600
 
-    - name: pem copy 
-      copy:
-        src: "id_rsa_pgpool"
-        dest: /root/.ssh/
-        owner: root
-        group: root
-        mode: 0600
-
-
-    - name: test connection
-      ping:
     - name: Group Add
       group:
         name: "{{ pg_group}}"
@@ -65,8 +46,63 @@
     - name: User Add
       user:
         name: "{{ pg_owner }}"
+        shell: "/bin/bash"
         group: "{{ pg_group }}"
         password: "{{ 'postgres' | password_hash('sha512') }}"
+        generate_ssh_key: "yes"
+        ssh_key_bits: "2048"
+        ssh_key_file: .ssh/{{ keyname }}
+        home: "/var/lib/pgsql/"
+      register: key_context
+
+
+
+    - name: "deploy authorized key"
+      authorized_key:
+        user: "{{ pg_owner }}"
+        state: "present"
+        key: "{{ item.ssh_public_key }}"
+        # path: "/vagrant_data/{{ keyname }}"
+      with_items:
+        - "{{ key_context }}"
+      when: inventory_hostname == "server1"
+
+    - name: 作成した鍵をvagrant_dataにコピー
+      shell: "cp {{ directory_pgdata }}.ssh/{{ keyname }} /vagrant_data/{{ keyname }}"
+
+    - name: 作成したauthorized_keysをvagrant_dataにコピー
+      shell: "cp {{ directory_pgdata }}.ssh/authorized_keys /vagrant_data/authorized_keys"
+
+
+      
+
+    - name: authorized_keys copy 
+      copy:
+        src: "/vagrant_data/authorized_keys"
+        dest: "{{ item.value }}"
+        owner: "{{ item.key }}"
+        group: "{{ item.key }}"
+        mode: 0600
+        remote_src: yes
+      loop: "{{ user_info | dict2items }}"
+      vars:
+        user_info:
+          root: "/root/"
+          postgres: "{{ directory_pgdata }}"
+
+    - name: key copy 
+      copy:
+        src: "/vagrant_data/id_rsa_pgpool"
+        dest: "{{ item.value }}"
+        owner: "{{ item.key }}"
+        group: "{{ item.key }}"
+        mode: 0600
+      loop: "{{ user_info | dict2items }}"
+      vars:
+        user_info:
+          root: "/root/"
+          postgres: "{{ directory_pgdata }}"
+
 
     - name: Make Directory for DB Cluster
       file:
@@ -75,28 +111,6 @@
         owner: "{{ pg_owner }}"
         group: "{{ pg_group }}"
         mode: '0755'
-
-    - name: ssh  directory
-      file: path=/home/postgres/.ssh state=directory owner=postgres group=postgres mode=0700
-
-
-    - name: authorized_keys copy 
-      copy:
-        src: "authorized_keys"
-        dest: /home/postgres/.ssh/
-        owner: postgres
-        group: postgres
-        mode: 0600
-
-    - name: pem copy 
-      copy:
-        src: "id_rsa_pgpool"
-        dest: /home/postgres/.ssh/
-        owner: postgres
-        group: postgres
-        mode: 0600
-
-
 
     - name: hosts追加
       lineinfile:
@@ -159,51 +173,104 @@
         packages:
           - "postgresql13-server"
           - "pgpool-II-pg13-*"
+          - "python38" #psycopg2インストール用
+          - "python3-psycopg2.x86_64"
+
+###############DB_init#############
+
+    - name: Create schema
+      become_user: postgres
+      postgresql_schema:
+        name: "{{ item.name }}"
+        owner: "{{ item.owner|default('postgres') }}"
+        port: "{{ postgresql_port }}"
+      with_items: "{{ postgresql_schemas }}"
+
+    - name: Create database
+      become_user: postgres
+      postgresql_db:
+        name: "{{ item.name }}"
+        template: "{{ item.template|default('template1') }}"
+        lc_collate: "{{ item.lc_collate|default('C') }}"
+        lc_ctype: "{{ item.lc_ctype|default('C') }}"
+        port: "{{ postgresql_port }}"
+      with_items: "{{ postgresql_databases }}"
 
 
-    - name: 資材コピー
-      copy:
-        src: "{{item.src}}"
-        dest: "{{item.dest}}"
-        owner: postgres
-        group: postgres
-        mode: 0600 
-      with_items:
-        - { src: "/vagrant_data/pgpool.conf", dest: "/etc/pgpool-II/pgpool.conf" }
-        - { src: "/vagrant_data/pool_hba.conf", dest: "/etc/pgpool-II/pool_hba.conf" }
-        - { src: "/vagrant_data/pool_passwd", dest: "/etc/pgpool-II/pool_passwd"}
-        - { src: "/vagrant_data/.pgpass", dest: "/var/lib/pgsql/.pgpass"}
-        - { src: "/vagrant_data/.pcppass", dest: "/home/postgres/.pcppass"}
-        - { src: "/vagrant_data/.pgpoolkey", dest: "/home/postgres/.pgpoolkey" }
-        - { src: "/vagrant_data/pcp.conf", dest: "/etc/pgpool-II/pcp.conf" }
 
-    - name: 資材コピー
-      copy:
-        src: "{{item.src}}"
-        dest: "{{item.dest}}"
-        owner: postgres
-        group: postgres
-        mode: 0755
-      with_items:
-        - { src: "/vagrant_data/escalation.sh", dest: "/etc/pgpool-II/escalation.sh"}
-        - { src: "/vagrant_data/recovery_1st_stage",dest: "/var/lib/pgsql/13/data/recovery_1st_stage"}
-        - { src: "/vagrant_data/pgpool_remote_start",dest: "/var/lib/pgsql/13/data/pgpool_remote_start"}
-        - { src: "/vagrant_data/pgpool", dest: "/etc/sysconfig/pgpool"}
-        - { src: "/vagrant_data/failover.sh", dest: "/etc/pgpool-II/failover.sh"}
-        - { src: "/vagrant_data/follow_primary.sh", dest: "/etc/pgpool-II/follow_primary.sh"}
+    - name: initdb
+      shell: /usr/pgsql-13/bin/initdb -E UTF8 --locale=C -A scram-sha-256 -W
+      become: yes
+      become_user: postgres
+      when: not dbcluster.stat.exists
+
+    # - name: Create PostgreSQL database
+    #   postgresql_db:
+    #     name: postgres
+    #     owner: postgres
+    #     encoding: 'UTF-8'
+    #     lc_collate: 'ja_JP.UTF-8'
+    #     lc_ctype: 'ja_JP.UTF-8'
+    #     template: 'template0'
+    #     login_user: postgres
+    #     login_password: "{{ db_pass }}"
+    #   notify: Restart postgresql-13
 
 
-    - name: pgpool_node_id
-      shell: echo "0" > /etc/pgpool-II/pgpool_node_id
-      when: inventory_hostname == 'server1'
+    - name: Create PostgreSQL user
+      postgresql_user:
+        name: postgres
+        password: "{{ db_pass }}"
+        login_user: postgres
+        login_password: "{{ db_pass }}"
+      notify: Restart postgresql-13
 
-    - name: pgpool_node_id
-      shell: echo "1" > /etc/pgpool-II/pgpool_node_id
-      when: inventory_hostname == 'server2'
 
-    - name: pgpool_node_id
-      shell: echo "2" > /etc/pgpool-II/pgpool_node_id
-      when: inventory_hostname == 'server3'
+
+
+    # - name: 資材コピー
+    #   copy:
+    #     src: "{{item.src}}"
+    #     dest: "{{item.dest}}"
+    #     owner: postgres
+    #     group: postgres
+    #     mode: 0600 
+    #   with_items:
+    #     - { src: "/vagrant_data/pgpool.conf", dest: "/etc/pgpool-II/pgpool.conf" }
+    #     - { src: "/vagrant_data/pool_hba.conf", dest: "/etc/pgpool-II/pool_hba.conf" }
+    #     - { src: "/vagrant_data/pool_passwd", dest: "/etc/pgpool-II/pool_passwd"}
+    #     - { src: "/vagrant_data/.pgpass", dest: "/var/lib/pgsql/.pgpass"}
+    #     - { src: "/vagrant_data/.pcppass", dest: "/home/postgres/.pcppass"}
+    #     - { src: "/vagrant_data/.pgpoolkey", dest: "/home/postgres/.pgpoolkey" }
+    #     - { src: "/vagrant_data/pcp.conf", dest: "/etc/pgpool-II/pcp.conf" }
+
+    # - name: 資材コピー
+    #   copy:
+    #     src: "{{item.src}}"
+    #     dest: "{{item.dest}}"
+    #     owner: postgres
+    #     group: postgres
+    #     mode: 0755
+    #   with_items:
+    #     - { src: "/vagrant_data/escalation.sh", dest: "/etc/pgpool-II/escalation.sh"}
+    #     - { src: "/vagrant_data/recovery_1st_stage",dest: "/var/lib/pgsql/13/data/recovery_1st_stage"}
+    #     - { src: "/vagrant_data/pgpool_remote_start",dest: "/var/lib/pgsql/13/data/pgpool_remote_start"}
+    #     - { src: "/vagrant_data/pgpool", dest: "/etc/sysconfig/pgpool"}
+    #     - { src: "/vagrant_data/failover.sh", dest: "/etc/pgpool-II/failover.sh"}
+    #     - { src: "/vagrant_data/follow_primary.sh", dest: "/etc/pgpool-II/follow_primary.sh"}
+
+
+    # - name: pgpool_node_id
+    #   shell: echo "0" > /etc/pgpool-II/pgpool_node_id
+    #   when: inventory_hostname == 'server1'
+
+    # - name: pgpool_node_id
+    #   shell: echo "1" > /etc/pgpool-II/pgpool_node_id
+    #   when: inventory_hostname == 'server2'
+
+    # - name: pgpool_node_id
+    #   shell: echo "2" > /etc/pgpool-II/pgpool_node_id
+    #   when: inventory_hostname == 'server3'
 
 
 
@@ -215,4 +282,4 @@
         enabled: yes
       with_items:
         - pgpool.service
-        - postgresql-13.service
+        # - postgresql-13.service
