@@ -46,7 +46,7 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
     centos4.vm.hostname = "server4"
     centos4.vm.network :private_network, ip: "172.16.2.74", virtualbox__intnet: "intnet"
     centos4.vm.network :private_network, ip: "192.168.137.104", virtualbox__intnet: "mynetwork"
-    centos4.vm.network :public_network, bridge: "en0: Wi-Fi (Wireless)"
+    centos4.vm.network :public_network, ip: "192.168.1.172", bridge: "en0: Wi-Fi (Wireless)"
     centos4.vm.synced_folder "./data", "/vagrant_data"
   end
 
