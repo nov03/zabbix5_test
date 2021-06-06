@@ -93,3 +93,9 @@
         dest: /root/repo/
         version: main
       when: inventory_hostname == "server4"
+
+
+    - name: initdb
+      shell: /ansible-galaxy collection install community.general
+
+      
