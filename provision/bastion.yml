@@ -98,4 +98,15 @@
 
       - name: initdb
         shell: ansible-galaxy collection install community.general
+      
+      - name: git config
+        git_config:
+          scope: global
+          name: "{{ item.name }}"
+          value: "{{ item.value }}"
+        loop:
+          - name: user.name
+            value: nov03
+          - name: user.email
+            value: n.ishii0101@gmail.com
       when: inventory_hostname == "server4"
