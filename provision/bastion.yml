@@ -10,7 +10,7 @@
     user_gr: operation
     keyname: id_rsa
 
-  tasks: 
+  tasks:
 
     - name: ssh  directory
       file: path=/root/.ssh state=directory owner=root group=root mode=0700
@@ -30,20 +30,21 @@
         ssh_key_file: ".ssh/{{ keyname }}"
       register: key_context
 
-    - name: "deploy authorized key"
-      authorized_key:
-        user: "{{ user }}"
-        state: "present"
-        key: "{{ item.ssh_public_key }}"
-      with_items:
-        - "{{ key_context }}"
-      when: inventory_hostname == "server1"
+    #SSHのキーはvagrant upする都度、server1にて再生成。sshkeyはgit管理しない。
+    - block:
+      - name: "deploy authorized key"
+        authorized_key:
+          user: "{{ user }}"
+          state: "present"
+          key: "{{ item.ssh_public_key }}"
+        with_items:
+          - "{{ key_context }}"
 
-    - name: 作成した鍵をvagrant_dataにコピー
-      shell: "{{ item }}"
-      with_items:
-        - "cp /home/operation/.ssh/{{ keyname }} /vagrant_data/{{ keyname }}"
-        - "cp /home/operation/.ssh/authorized_keys /vagrant_data/authorized_keys"
+      - name: 作成した鍵をvagrant_dataにコピー
+        shell: "{{ item }}"
+        with_items:
+          - "cp /home/operation/.ssh/{{ keyname }} /vagrant_data/{{ keyname }}"
+          - "cp /home/operation/.ssh/authorized_keys /vagrant_data/authorized_keys"
       when: inventory_hostname == "server1"
 
 
@@ -74,28 +75,27 @@
           root: "/root/.ssh/"
           operation: "/home/operation/.ssh/"
 
-    - name: Install 
-      yum:
-        name: "{{ packages }}"
-        state: present
-        update_cache: yes
-      vars:
-        packages:
-          - "git"
-          - "vim"
-          - "python38"
-          - "ansible"
+
+    #server4はansible実行サーバとして使用する
+    - block:   
+      - name: Install 
+        yum:
+          name: "{{ packages }}"
+          state: present
+          update_cache: yes
+        vars:
+          packages:
+            - "git"
+            - "vim"
+            - "python38"
+            - "ansible"
+
+      - name: git clone
+        ansible.builtin.git:
+          repo: https://github.com/nov03/ansible_rasp
+          dest: /root/repo/
+          version: main
+
+      - name: initdb
+        shell: ansible-galaxy collection install community.general
       when: inventory_hostname == "server4"
-
-    - name: git clone
-      ansible.builtin.git:
-        repo: https://gitlab.com/n.ishii0101/ansible_rasp
-        dest: /root/repo/
-        version: main
-      when: inventory_hostname == "server4"
-
-
-    - name: initdb
-      shell: /ansible-galaxy collection install community.general
-
-      
